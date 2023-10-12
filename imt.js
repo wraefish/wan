@@ -1,341 +1,879 @@
-/******************************************
- * @name i茅台预约
- * @channel https://t.me/yqc_123/
- * @feedback https://t.me/yqc_777/
- * @author 𝒀𝒖𝒉𝒆𝒏𝒈
- * @update 20231002
- * @version 1.0.0
-******************************************/
-var $ = new Env('i茅台'),service = $.http
-// 开发方便兼容node
-$.isNode() && (($request = null), ($response = null))
-var CryptoJS = loadCryptoJS()
-var maotai = new Maotai()
-// -----------------------------------------------------------------------------------------
-// 配置项
-var isClearShopDir = $.getdata('imaotai__config__clearshopdir') || false // 是否清理店铺字典
-var province = $.getdata('imaotai__config__province') || '' // 省份
-var city = $.getdata('imaotai__config__city') || '' // 城市
-var itemCode = $.getdata('imaotai__config__itemcode') || '10213' // 预约项
-var location = $.getdata('imaotai__config__location') || '' // 地址经纬度
-var address = $.getdata('imaotai__config__address') || '' // 详细地址
-var shopid = $.getdata('imaotai__config__shopid') || '' // 商铺id
-var imaotaiParams = JSON.parse($.getdata('imaotai_params') || '{}') // 抓包参数
-var Message = '' // 消息内容
-// -----------------------------------------------------------------------------------------
-// TODO: 后续支持多品预约
-var itemMap = {
-    10213: '贵州茅台酒（癸卯兔年）',
-    2478: '贵州茅台酒（珍品）',
-    10214: '贵州茅台酒（癸卯兔年）x2',
-    10056: '53%vol 500ml 茅台1935'
+/*
+ * 脚本名称：i 茅台
+ * 更新时间：2023-10-11
+ * 定时任务：17 9 * * *
+ * 脚本说明：自动申购茅台酒，兼容 Node.js 和手机 NE 环境执行。
+ * 环境变量：export MT_TOKENS="MT-Device-ID,MT-Token"  // 设备ID,用户TOKEN  多账号用 @ 隔开
+ * 环境变量：export MT_PROVINCE="广东省"  // 省份
+ * 环境变量：export MT_CITY="广州市"  // 城市
+ * 环境变量：export MT_DISTRICT="天河区|海珠区"  // 需要申购的区域，多个区域以 | 隔开，留空为随机申购全市所有门店
+ * 环境变量：export MT_ITEM_BLACK="2478|10056"  // 申购商品ID黑名单，多个ID以 | 隔开，留空为随机申购所有商品
+ * 环境变量：export MT_VERSION="1.4.9"  // APP版本号 非必填
+ * 环境变量：export MT_USERAGENT="iOS;16.1.2;Apple;?unrecognized?"  // User-Agent 非必填
+ * 环境变量：export MT_R="clips_OlU6TmFRag5rCXwbNAQ/Tz1SKlN8THcecBp/HGhHdw=="  // 非必填
+
+--------------- BoxJS & 重写模块 --------------
+
+https://raw.githubusercontent.com/FoKit/Scripts/main/boxjs/fokit.boxjs.json
+https://raw.githubusercontent.com/FoKit/Scripts/main/rewrite/get_maotai_token.conf
+https://raw.githubusercontent.com/FoKit/Scripts/main/rewrite/get_maotai_token.sgmodule
+
+------------------ Surge 配置 -----------------
+
+[MITM]
+hostname = %APPEND% app.moutai519.com.cn
+
+[Script]
+茅台Token = type=http-request,pattern=^https:\/\/app\.moutai519\.com\.cn\/xhr\/front\/mall\/message\/unRead\/query,requires-body=0,max-size=0,script-path=https://raw.githubusercontent.com/FoKit/Scripts/main/scripts/i-maotai.js
+
+i 茅台 = type=cron,cronexp=17 9 * * *,timeout=60,script-path=https://raw.githubusercontent.com/FoKit/Scripts/main/scripts/i-maotai.js,script-update-interval=0
+
+------------------ Loon 配置 ------------------
+
+[MITM]
+hostname = app.moutai519.com.cn
+
+[Script]
+http-request ^https:\/\/app\.moutai519\.com\.cn\/xhr\/front\/mall\/message\/unRead\/query tag=茅台Token, script-path=https://raw.githubusercontent.com/FoKit/Scripts/main/scripts/i-maotai.js,requires-body=0
+
+cron "17 9 * * *" script-path=https://raw.githubusercontent.com/FoKit/Scripts/main/scripts/i-maotai.js,tag = i 茅台,enable=true
+
+-------------- Quantumult X 配置 --------------
+
+[MITM]
+hostname = app.moutai519.com.cn
+
+[rewrite_local]
+^https:\/\/app\.moutai519\.com\.cn\/xhr\/front\/mall\/message\/unRead\/query url script-request-header https://raw.githubusercontent.com/FoKit/Scripts/main/scripts/i-maotai.js
+
+[task_local]
+17 9 * * * https://raw.githubusercontent.com/FoKit/Scripts/main/scripts/i-maotai.js, tag=i 茅台, enabled=true
+
+------------------ Stash 配置 -----------------
+
+cron:
+  script:
+    - name: i 茅台
+      cron: '17 9 * * *'
+      timeout: 10
+
+http:
+  mitm:
+    - "app.moutai519.com.cn"
+  script:
+    - match: ^https:\/\/app\.moutai519\.com\.cn\/xhr\/front\/mall\/message\/unRead\/query
+      name: 茅台Token
+      type: request
+      require-body: true
+
+script-providers:
+  i 茅台:
+    url: https://raw.githubusercontent.com/FoKit/Scripts/main/scripts/i-maotai.js
+    interval: 86400
+
+*/
+
+const $ = new Env('i 茅台');
+const notify = $.isNode() ? require('./sendNotify') : '';
+const MT_INFO = '028e7f96f6369cafe1d105579c5b9377';
+const nowDate = parseInt((new Date().getTime() / 1000).toString());  // 当前时间戳
+const zeroDate = (nowDate - (nowDate % 86400) - 3600 * 8) * 1000;  // 今日零点时间戳
+let productInfo = [], message = '', CookieArr = [], Cookie = '', DeviceID = '';
+
+let MT_PROVINCE = $.getdata('MT_PROVINCE') || '广东省';
+let MT_CITY = $.getdata('MT_CITY') || '广州市';
+let MT_DISTRICT = $.getdata('MT_DISTRICT') || '';
+let MT_ITEM_BLACK = $.getdata('MT_ITEM_BLACK') || '2478|10056';
+let MT_TOKENS = $.getdata('MT_TOKENS') || '';
+let MT_VERSION = $.getdata('MT_VERSION') || '1.4.9';
+let MT_USERAGENT = $.getdata('MT_USERAGENT') || 'iOS;16.1.2;Apple;?unrecognized?';
+let MT_R = $.getdata('MT_R') || 'clips_OlU6TmFRag5rCXwbNAQ/Tz1SKlN8THcecBp/HGhHdw==';
+
+if ($.isNode()) {
+  MT_PROVINCE = process.env.MT_PROVINCE ? process.env.MT_PROVINCE : MT_PROVINCE;
+  MT_CITY = process.env.MT_CITY ? process.env.MT_CITY : MT_CITY;
+  MT_DISTRICT = process.env.MT_DISTRICT ? process.env.MT_DISTRICT : MT_DISTRICT;
+  MT_ITEM_BLACK = process.env.MT_ITEM_BLACK ? process.env.MT_ITEM_BLACK : MT_ITEM_BLACK;
+  MT_TOKENS = process.env.MT_TOKENS ? process.env.MT_TOKENS : MT_TOKENS;
+  MT_VERSION = process.env.MT_VERSION ? process.env.MT_VERSION : MT_VERSION;
+  MT_USERAGENT = process.env.MT_USERAGENT ? process.env.MT_USERAGENT : MT_USERAGENT;
+  MT_R = process.env.MT_R ? process.env.MT_R : MT_R;
 }
+
 !(async () => {
-    // 抓包
-    if ($request && typeof $request === 'object') {
-        if ($request.method === 'OPTIONS') return false
-        // console.log(JSON.stringify($request.headers))
-        var userId = JSON.parse($response.body).data.userId
-        $.setdata(
-            JSON.stringify({
-                headers: $request.headers,
-                userId
-            }),
-            'imaotai_params'
-        )
-        Message = `抓取数据成功🎉\nuserId:${userId}`
-        return false
+  if (isGetCookie = typeof $request !== `undefined`) {
+    GetCookie();
+    $.done();
+  }
+
+  function GetCookie() {
+    if ($request && $request.headers) {
+      if (($request.headers['MT-Token'] && $request.headers['MT-Device-ID']) || ($request.headers['mt-token'] && $request.headers['mt-device-id'])) {
+        let new_MT_Token = $request.headers['MT-Token'] || $request.headers['mt-token'];
+        let new_Device_ID = $request.headers['MT-Device-ID'] || $request.headers['mt-device-id'];
+        let old_MT_Token = MT_TOKENS.split(',') ? MT_TOKENS.split(',')[1] : '';
+        if (old_MT_Token !== new_MT_Token) {
+          $.setdata(new_Device_ID + ',' + new_MT_Token, 'MT_TOKENS');
+          $.msg($.name, `🎉 Token获取成功`, `${new_Device_ID + ',' + new_MT_Token}`);
+        } else {
+          $.log(`无需更新 MT-Token:\n${new_Device_ID + ',' + new_MT_Token}\n`);
+        }
+      }
+      if ($request.headers['MT-APP-Version'] || $request.headers['mt-app-version']) {
+        $.MT_VERSION = $request.headers['MT-APP-Version'] || $request.headers['mt-app-version'];
+        $.setdata($.MT_VERSION, `MT_VERSION`);
+        $.log(`🎉 MT_VERSION 写入成功:\n${$.MT_VERSION}\n`);
+      }
+      if ($request.headers['User-Agent'] || $request.headers['user-agent']) {
+        $.MT_USERAGENT = $request.headers['User-Agent'] || $request.headers['user-agent'];
+        $.setdata($.MT_USERAGENT, `MT_USERAGENT`);
+        $.log(`🎉 MT_USERAGENT 写入成功:\n${$.MT_USERAGENT}\n`);
+      }
+      if ($request.headers['MT-R'] || $request.headers['mt-r']) {
+        $.MT_R = $request.headers['MT-R'] || $request.headers['mt-r'];
+        $.setdata($.MT_R, `MT_R`);
+        $.log(`🎉 MT_R 写入成功:\n${$.MT_R}\n`);
+      }
     }
-    if (JSON.stringify(imaotaiParams) === '{}') throw `请先开启代理工具对必要参数进行抓包`
-    if (!imaotaiParams.userId || !imaotaiParams.headers['MT-Token']) throw '请先开启代理工具进行抓包相关操作!'
-    if (!province) throw '请在BoxJs中配置省份'
-    if (!city) throw '请在BoxJs中配置城市'
-    if (!itemCode) throw '请在BoxJs中配置预约项'
-    if (!address) throw '请在BoxJs中配置详细地址'
-    if (!location) await queryAddress()
-    $.log(`获取到经纬度：${location}`)
-    if (shopid) maotai.shopId = shopid
-    // 当前时间段如果不是9点 - 10点，不允许预约
-    var _hour = new Date().getHours()
-    if (_hour < 9 || _hour > 10) throw '不在有效的预约时间内'
-    var { headers, userId } = imaotaiParams
-    maotai.headers = Object.assign(maotai.headers, headers)
-    maotai.userId = userId
-    if (!maotai.version) {
-        var version = await maotai.getLatestVersion()
-        maotai.version = version
+  }
+
+  MT_TOKENS = MT_TOKENS.split('@');
+  Object.keys(MT_TOKENS).forEach((item) => {
+    if (MT_TOKENS[item]) {
+      CookieArr.push(MT_TOKENS[item]);
     }
-    $.log(`当前版本号：${maotai.version}`)
-    if (!maotai.sessionId) {
-        var sessionId = await maotai.getSessionId()
-        maotai.sessionId = sessionId
-    }
-    $.log(`获取到sessionId：${maotai.sessionId}`)
-    isClearShopDir && $.setdata(JSON.stringify([]), `imaotai_${province}_${city}_dictionary`)
-    var dictionary = JSON.parse($.getdata(`imaotai_${province}_${city}_dictionary`) || '[]')
-    if (dictionary.length === 0) {
-        dictionary = await maotai.getStoreMap()
-        $.log(`获取到商铺地图数据`)
-        $.setdata(JSON.stringify(dictionary), `imaotai_${province}_${city}_dictionary`)
+  });
+  if (!CookieArr[0]) {
+    $.msg($.name, '❌ 未配置 MT_TOKENS\n');
+    return;
+  } else {
+    console.log(`\n当前 MT_TOKENS 数量: ${CookieArr.length} 个\n`);
+  }
+  $.sessionId = '', $.shopIds = [], $.itemCodes = [];
+  await getShopMap();  // 获取门店地图
+  await getSessionId();  // 获取申购列表
+  await getShopInfo();  // 获取门店库存
+  for (let i = 0; i < CookieArr.length; i++) {
+    $.userName = '', $.userId = '', $.mobile = '';
+    console.log(`\n======== 账号${i + 1} ========\n`);
+    let randomInt = Math.floor(Math.random() * 300);  // 随机等待 0-300 秒
+    console.log(`随机等待 ${randomInt} 秒\n`);
+    await $.wait(randomInt);
+    message += `账号 ${i + 1}  `
+    let TOKEN = CookieArr[i].split(',');
+    if (TOKEN.length === 2) {
+      DeviceID = TOKEN[0];
+      Cookie = TOKEN[1];
     } else {
-        $.log(`从缓存中获取到商铺地图数据`)
+      console.log(`Token格式错误。\n`);
+      continue;
     }
-    // $.log(JSON.stringify(dictionary))
-    maotai.dictionary = dictionary
-    if (!maotai.shopId) {
-        var shopId = await maotai.getNearbyStore()
-        maotai.shopId = shopId
+    await getLatestVersion();  // 获取最新版本
+    await getUserInfo();  // 获取用户信息
+    if ($.userName) {
+      for (const itemID of $.itemCodes) {
+        $.itemId = itemID;
+        $.shopIds = $.stock[$.itemId];
+        if (!$.shopIds) {
+          let msg = `❌ ${getProductInfo($.itemId, 'title')} [${$.itemId}]暂无可申购门店。\n`;
+          console.log(msg);
+          message += msg;
+          continue;
+        }
+        if ($.shopIds.length > 1) {
+          $.shopId = randomArr($.shopIds);
+        } else {
+          $.shopId = $.shopIds;
+        }
+        $.actParam = await getActParam();
+        if ($.actParam) {
+          console.log(`开始申购: ${getProductInfo($.itemId, 'title')} [${$.shopId}-${$.itemId}]\n`);
+          await $.wait(1000 * 5);
+          await reservationAdd();  // 申购商品
+        } else {
+          console.log(`getActParam失败, 跳出。`);
+        }
+      }
+      await $.wait(1000 * 3);
+      await getEnergyAward();  // 领取耐力
+      await get7DayReward();  // 领取连续申购奖励
+      // await getApplyingDays();  // 查询累计申购天数领取奖励
+      await getCumulativelyReward();  // 领取累计申购奖励
+      // await reservationList();  // 查询申购记录
+    } else {
+      console.log(`❌ MT_TOKENS 已失效。\n`);
+      message += `❌ MT_TOKENS 已失效。\n`;
     }
-    $.log(`获取到最近店铺id：${maotai.shopId}`)
-    await maotai.doReserve()
-    await maotai.getAward()
+    message += `\n`;
+  }
+  if (message) {
+    message = message.replace(/\n+$/, '');
+    $.msg($.name, '', message);
+    if ($.isNode()) await notify.sendNotify($.name, message);
+  }
 })()
-    .catch((e) => {
-        $.log('', `❌ ${$.name}, 失败! 原因: ${e}!`, '')
-        Message += `❌ 失败! 原因: ${e}!`
-    })
-    .finally(async () => {
-        const notify = async (msg) => $.msg($.name, '', msg)
-        await notify(Message)
-        $.done()
-    })
-/**
- * 根据详细地址查询经纬度
- */
-async function queryAddress() {
-    var amapApi = '0a7f4baae0a5e37e6f90e4dc88e3a10d'
-    var url = `https://restapi.amap.com/v3/geocode/geo?key=${amapApi}&output=json&address=${encodeURIComponent(
-        address
-    )}`
-    var { body: resp } = await service.get(url)
-    var { status, info, geocodes } = JSON.parse(resp)
-    if (status !== '1') throw `获取经纬度失败, ${info}`
-    var { location: _location } = geocodes[0]
-    $.setdata(_location, 'imaotai__config__location')
-    location = _location
+  .catch((e) => {
+    $.log('', `❌ ${$.name}, 出错了，原因: ${e}!`, '');
+  })
+  .finally(() => {
+    $.done();
+  });
+
+
+// 获取最新版本
+async function getLatestVersion() {
+  data = await http_get(`https://apps.apple.com/cn/app/i%E8%8C%85%E5%8F%B0/id1600482450`);
+  if (data) {
+    try {
+      MT_VERSION = data.match(/whats-new__latest__version">版本 ([\d\.]+)/)[1];
+      !$.isNode() ? $.setdata(MT_VERSION, `MT_VERSION`) : '';  // 持久化
+    } catch (e) {
+      $.log(e);
+    };
+  } else {
+    console.log(`最新版本获取失败\n`);
+  }
 }
-/**
- * 工具类
- */
-function Maotai() {
-    return new (class {
-        constructor() {
-            this.headers = {
-                'MT-Info': `028e7f96f6369cafe1d105579c5b9377`,
-                'Accept-Encoding': `gzip, deflate, br`,
-                Host: `app.moutai519.com.cn`,
-                'MT-User-Tag': `0`,
-                'MT-Token': ``, // 抓
-                Connection: `keep-alive`,
-                'MT-Device-ID': ``, // 抓
-                'Accept-Language': `zh-Hans-CN;q=1`,
-                'MT-Team-ID': ``,
-                'Content-Type': `application/json`,
-                'MT-Request-ID': `${Date.now()}${Math.floor(Math.random() * 90000 + 10000)}`,
-                'MT-APP-Version': `1.4.9`,
-                'User-Agent': `iOS;14.3;Apple;iPhone 12`, // 抓
-                'MT-K': Date.now(),
-                'MT-R': `clips_OlU6TmFRag5rCXwbNAQ/Tz1SKlN8THcecBp/HGhHdg==`,
-                'MT-Bundle-ID': `com.moutai.mall`,
-                'MT-Network-Type': `WIFI`,
-                Accept: `*/*`,
-                'BS-DVID': ``,
-                'MT-Lat': ``, // 填
-                'MT-Lng': `` // 填
-            }
-            this.version = ''
-            this.sessionId = ''
-            this.dictionary = []
-            this.shopId = ''
-            this.userId = '' // 抓
+
+
+// 获取门店地图
+async function getShopMap() {
+  data = await http_get(`https://static.moutai519.com.cn/mt-backend/xhr/front/mall/resource/get`);
+  if (data && data?.code === 2000) {
+    mapData = await http_get(data.data.mtshops_pc.url);
+    if (mapData) {
+      $.shopMap = mapData;
+    }
+  } else {
+    console.log(`门店地图获取失败\n`);
+  }
+}
+
+
+// 获取用户信息
+function getUserInfo() {
+  let opt = {
+    url: `https://app.moutai519.com.cn/xhr/front/user/info`,
+    headers: {
+      'Accept-Language': `zh-Hans-CN;q=1`,
+      'MT-Token': Cookie,
+      'Connection': `keep-alive`,
+      'Accept-Encoding': `gzip, deflate, br`,
+      'MT-Device-ID': DeviceID,
+      'MT-Request-ID': `${Date.now() * 100000 + parseInt(10000 * Math.random())}`,
+      'User-Agent': MT_USERAGENT,
+      'MT-User-Tag': `0`,
+      'MT-Bundle-ID': `com.moutai.mall`,
+      'Host': `app.moutai519.com.cn`,
+      'MT-Team-ID': ``,
+      'MT-APP-Version': MT_VERSION,
+      'MT-R': MT_R,
+      'MT-Network-Type': `Unknown`,
+      'Accept': `*/*`,
+    }
+  }
+  // console.log(opt);
+  return new Promise(resolve => {
+    $.get(opt, (err, resp, data) => {
+      try {
+        if (err) $.log(err);
+        if (data) {
+          // console.log(data);
+          data = JSON.parse(data);
+          if (data?.code === 2000) {
+            $.userName = data.data.userName;
+            $.userId = data.data.userId;
+            $.mobile = data.data.mobile;
+            console.log(`用户姓名: ${$.userName}\n用户编号: ${$.userId}\n手机号码: ${$.mobile}\n`);
+            message += `用户姓名：${$.userName}  手机号码：${$.mobile}\n`;
+          } else {
+            console.log(`用户信息获取失败`, data);
+          }
+        } else {
+          $.log("⚠️ 服务器返回了空数据\n");
         }
-        // 获取最新版本号
-        async getLatestVersion() {
-            return (await service.get('https://apps.apple.com/cn/app/i%E8%8C%85%E5%8F%B0/id1600482450')).body
-                .match(/new__latest__version">(.*?)<\/p>/)[1]
-                .replace('版本 ', '')
-        }
-        // 获取今日sessionId
-        async getSessionId() {
-            var _ts = new Date().setHours(0, 0, 0, 0)
-            var { body: response } = await service.get(
-                `https://static.moutai519.com.cn/mt-backend/xhr/front/mall/index/session/get/${_ts}`
-            )
-            var { code, data, message } = JSON.parse(response)
-            if (code !== 2000) throw `获取sessionId失败, ${message}`
-            var { sessionId } = data
-            return sessionId
-        }
-        // 获取商铺地图信息
-        async getStoreMap() {
-            var { body: response } = await service.get(
-                'https://static.moutai519.com.cn/mt-backend/xhr/front/mall/resource/get'
-            )
-            var { code, data, message } = JSON.parse(response)
-            if (code !== 2000) throw `获取商铺地图信息失败, ${message}`
-            var {
-                mtshops_pc: { url: mapUrl }
-            } = data
-            var _json = (await service.get(mapUrl)).body
-            var arr = []
-            Object.values(JSON.parse(_json)).map((item) => {
-                if (item.provinceName === province && item.cityName === city) arr.push(item)
-            })
-            return arr
-        }
-        // TODO:后续是否加入当地投放量最大的店铺
-        // 获取最近店铺
-        async getNearbyStore() {
-            var _ts = new Date().setHours(0, 0, 0, 0)
-            var url = `https://static.moutai519.com.cn/mt-backend/xhr/front/mall/shop/list/slim/v3/${
-                this.sessionId
-            }/${encodeURIComponent(province)}/${itemCode}/${_ts}`
-            var { body: response } = await service.get({ url })
-            var { code, data, message } = JSON.parse(response)
-            if (code !== 2000) throw `获取店铺列表失败, ${message}`
-            var { shops } = data
-            // 查找最近店铺
-            const findBest = (shops) => {
-                var { dictionary } = this
-                var _lnt = location.split(',')[0]
-                var _lat = location.split(',')[1]
-                // 计算距离
-                const getDistance = (lnt1, lat1, lnt2, lat2) => {
-                    var radLat1 = (lat1 * Math.PI) / 180.0
-                    var radLat2 = (lat2 * Math.PI) / 180.0
-                    var a = radLat1 - radLat2
-                    var b = (lnt1 * Math.PI) / 180.0 - (lnt2 * Math.PI) / 180.0
-                    var s =
-                        2 *
-                        Math.asin(
-                            Math.sqrt(
-                                Math.pow(Math.sin(a / 2), 2) +
-                                    Math.cos(radLat1) * Math.cos(radLat2) * Math.pow(Math.sin(b / 2), 2)
-                            )
-                        )
-                    s = s * 6378.137
-                    s = Math.round(s * 10000) / 10000
-                    return s
+      } catch (error) {
+        $.log(error);
+      } finally {
+        resolve();
+      }
+    });
+  });
+}
+
+
+// 获取申购列表
+function getSessionId() {
+  let opt = {
+    url: `https://static.moutai519.com.cn/mt-backend/xhr/front/mall/index/session/get/${zeroDate}`,
+    headers: {
+      // 'mt-device-id': DeviceID,
+      'mt-user-tag': '0',
+      'accept': '*/*',
+      'mt-network-type': 'WIFI',
+      // 'mt-token': Cookie,
+      'mt-bundle-id': 'com.moutai.mall',
+      'accept-language': 'zh-Hans-CN;q=1',
+      'mt-app-version': MT_VERSION,
+    }
+  }
+  // console.log(opt);
+  return new Promise(resolve => {
+    $.get(opt, (err, resp, data) => {
+      try {
+        if (err) $.log(err);
+        if (data) {
+          // console.log(data);
+          data = JSON.parse(data);
+          if (data?.code === 2000) {
+            $.sessionId = data.data.sessionId;
+            // console.log(`${$.sessionId}\n`);
+            itemList = data.data.itemList;
+            if (itemList.length > 0) {
+              if (MT_ITEM_BLACK) console.log(`申购商品黑名单: ${MT_ITEM_BLACK}`)
+              for (let item of itemList) {
+                if (MT_ITEM_BLACK) {
+                  if (!new RegExp(MT_ITEM_BLACK).test(item.itemCode)) {
+                    $.itemCodes.push(item.itemCode);
+                  }
+                } else {
+                  $.itemCodes.push(item.itemCode);
                 }
-                // 获取离填写经纬度距离
-                var nearestShop = dictionary.map((item) => ({
-                    ...item,
-                    distance: getDistance(_lnt, _lat, item.lng, item.lat)
-                }))
-                // 过滤出包含预约项的店铺列表
-                var _shops = shops.reduce((acc, item) => {
-                    var _item = item.items.find((i) => i.itemId === itemCode)
-                    if (_item) {
-                        acc.push({
-                            shopId: item.shopId,
-                            items: _item
-                        })
-                    }
-                    return acc
-                }, [])
-                // 寻找最佳最近且包含预约项的店铺
-                var bestReserveShop = nearestShop
-                    .filter((item) => _shops.find((_item) => _item.shopId === item.shopId))
-                    .sort((a, b) => a.distance - b.distance)[0]
-                $.log(`获取到最近店铺：${JSON.stringify(bestReserveShop)}`)
-                if (!bestReserveShop)
-                    throw '获取最佳店铺失败, 可能的原因是本地无预约项的投放, 请切换预约项或手动填入商店ID'
-                return bestReserveShop.shopId
+              }
+              console.log(`申购商品白名单：${$.itemCodes.join('|')}\n`);
             }
-            return findBest(shops)
+          } else {
+            console.log(`查询失败`, data);
+          }
+        } else {
+          $.log("⚠️ 服务器返回了空数据\n");
         }
-        // 预约
-        async doReserve() {
-            var params = {
-                itemInfoList: [{ count: 1, itemId: itemCode }],
-                sessionId: parseInt(this.sessionId),
-                userId: this.userId,
-                shopId: this.shopId
-            }
-            var helper = new DecryptHelper()
-            var actParam = helper.Encrypt(JSON.stringify(params))
-            var options = {
-                url: `https://app.moutai519.com.cn/xhr/front/mall/reservation/add`,
-                headers: this.headers,
-                body: JSON.stringify({
-                    actParam: actParam,
-                    ...params
-                })
-            }
-            var { body: resp } = await service.post(options)
-            var { code, data, message } = JSON.parse(resp)
-            if (code === 401) {
-                Message = `预约失败\ntoken失效, 请重新抓包获取`
-                return false
-            }
-            if (code !== 2000) throw `预约失败, ${message}`
-            Message += `${JSON.stringify(data)}`
-        }
-        // 领取耐力和小茅运
-        async getAward() {
-            var cookies = {
-                'MT-Device-ID-Wap': this.headers['MT-Device-ID'],
-                'MT-Token-Wap': this.headers['MT-Token'],
-                YX_SUPPORT_WEBP: '1'
-            }
+      } catch (error) {
+        $.log(error);
+      } finally {
+        resolve();
+      }
+    });
+  });
+}
 
-            var options = {
-                url: 'https://h5.moutai519.com.cn/game/isolationPage/getUserEnergyAward',
-                headers: {
-                    ...this.headers,
-                    Cookie: Object.entries(cookies)
-                        .map(([key, value]) => `${key}=${value}`)
-                        .join('; ')
-                },
-                body: JSON.stringify({})
+
+// 获取门店库存
+function getShopInfo() {
+  console.log(`获取[${MT_PROVINCE + MT_CITY + MT_DISTRICT}]门店库存:\n`);
+  let opt = {
+    url: `https://static.moutai519.com.cn/mt-backend/xhr/front/mall/shop/list/slim/v3/${$.sessionId}/${encodeURIComponent(MT_PROVINCE)}/10056/${zeroDate}`,
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+    }
+  }
+  // console.log(opt);
+  return new Promise(resolve => {
+    $.get(opt, (err, resp, data) => {
+      try {
+        if (err) $.log(err);
+        if (data) {
+          data = JSON.parse(data);
+          if (data?.code === 2000) {
+            productInfo = data.data.items;
+            shopInfo = data.data.shops;
+            let shops = data.data.shops;
+            $.stock = {}
+            for (const _ in shops) {
+              const shopId = shops[_].shopId;
+              const items = shops[_].items;
+              if ($.shopMap[shopId]['cityName'] === MT_CITY) {
+                if (MT_DISTRICT && !new RegExp(MT_DISTRICT).test($.shopMap[shopId]['districtName'])) continue;
+                for (const _ in items) {
+                  const { count, itemId, inventory, ownerName } = items[_];
+                  if (!$.stock[itemId]) $.stock[itemId] = [];
+                  $.stock[itemId].push(shopId);
+                  console.log(`【${ownerName}】[${shopId}-${itemId}] ${getProductInfo(itemId, 'title')}  价格:${getProductInfo(itemId, 'price')}  库存:${inventory}`);
+                  // console.log(`门店:${ownerName}  商品[${itemId}]:${getProductInfo(itemId, 'title')}  价格:${getProductInfo(itemId, 'price')}  库存:${inventory}`);
+                }
+              }
             }
-            var { body: resp } = await service.post(options)
-            // {"code":200,"message":null,"data":{"continueReserveRate":null,"awardRule":[{"goodId":20001,"goodName":"耐力","goodCode":null,"goodType":null,"goodUrl":null,"count":30}]},"error":null}
-            var { code, data, message } = JSON.parse(resp)
-            if (code !== 200) throw `领取耐力失败, ${message}`
-            $.log(`领取耐力成功`)
-            Message += `${JSON.stringigy(data)}`
+            // console.log($.stock);
+          } else {
+            console.log(`查询失败`, data);
+          }
+        } else {
+          $.log("⚠️ 服务器返回了空数据\n");
         }
-    })()
+      } catch (error) {
+        $.log(error);
+      } finally {
+        resolve();
+      }
+    });
+  });
 }
-/**
- * 加密类
- */
-function DecryptHelper() {
-    return new (class {
-        constructor(key, iv) {
-            this.key = CryptoJS.enc.Utf8.parse(key || 'qbhajinldepmucsonaaaccgypwuvcjaa')
-            this.iv = CryptoJS.enc.Utf8.parse(iv || '2018534749963515')
+
+
+// 获取actParam
+async function getActParam() {
+  let opt = {
+    url: `https://api.fokit.cn/i-maotai`,
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: `{"itemInfoList":[{"count":1,"itemId":${$.itemId}}],"sessionId":${$.sessionId},"userId":"None","shopId":${$.shopId}}`,
+  }
+  return new Promise(resolve => {
+    $.post(opt, (err, resp, data) => {
+      try {
+        if (data) {
+          data = JSON.parse(data).actParam;
+          // $.log("获取actParam成功", data);
         }
-        pkcs7padding(text) {
-            const bs = 16
-            const length = text.length
-            const padding_size = bs - (length % bs)
-            const padding = String.fromCharCode(padding_size).repeat(padding_size)
-            return text + padding
-        }
-        Encrypt(content) {
-            const contentPadding = this.pkcs7padding(content)
-            const encryptBytes = CryptoJS.AES.encrypt(contentPadding, this.key, {
-                iv: this.iv,
-                mode: CryptoJS.mode.CBC,
-                padding: CryptoJS.pad.NoPadding
-            })
-            return encryptBytes.toString()
-        }
-        Decrypt(content) {
-            const decryptBytes = CryptoJS.AES.decrypt(content, this.key, {
-                iv: this.iv,
-                mode: CryptoJS.mode.CBC,
-                padding: CryptoJS.pad.NoPadding
-            })
-            const result = decryptBytes.toString(CryptoJS.enc.Utf8)
-            return result.replace(/[\x00-\x1f]*$/g, '')
-        }
-    })()
+      } catch (error) {
+        $.log(error);
+      } finally {
+        resolve(data);
+      }
+    });
+  });
 }
-/***************** Env *****************/
+
+
+// 开始申购
+async function reservationAdd() {
+  const time = Date.now();
+  // const mtv = await getMTV(time);
+  let opt = {
+    url: `https://app.moutai519.com.cn/xhr/front/mall/reservation/add`,
+    headers: {
+      'MT-Info': MT_INFO,
+      'Accept-Encoding': `gzip, deflate, br`,
+      'Host': `app.moutai519.com.cn`,
+      // 'MT-V': mtv,
+      'MT-User-Tag': `0`,
+      'MT-Token': Cookie,
+      'Connection': `keep-alive`,
+      'MT-Device-ID': DeviceID,
+      'Accept-Language': `zh-Hans-CN;q=1`,
+      'MT-Team-ID': ``,
+      'Content-Type': `application/json`,
+      'MT-Request-ID': `${Date.now() * 100000 + parseInt(10000 * Math.random())}`,
+      'MT-APP-Version': MT_VERSION,
+      'User-Agent': MT_USERAGENT,
+      'MT-K': time,
+      'MT-R': MT_R,
+      'MT-Bundle-ID': `com.moutai.mall`,
+      'MT-Network-Type': `Unknown`,
+      'Accept': `*/*`,
+      'MT-Lat': ``,
+      'MT-Lng': ``,
+    },
+    body: `{"actParam":"${$.actParam}","itemInfoList":[{"count":1,"itemId":"${$.itemId}"}],"shopId":"${$.shopId}","sessionId":${$.sessionId}}`
+  }
+  // console.log(opt);
+  return new Promise(resolve => {
+    $.post(opt, (err, resp, data) => {
+      try {
+        let result = '';
+        // console.log(resp);
+        if (err) {
+          $.log(err);
+          if (resp.statusCode === 480) {
+            result = `❌ ${getProductInfo($.itemId, 'title')} 申购失败：${JSON.parse(data).message} - ${$.shopMap[$.shopId]['name']}\n`
+          }
+        } else {
+          if (data) {
+            // console.log(data);
+            data = JSON.parse(data);
+            if (data?.code === 2000) {
+              result = `🎉 ${getProductInfo($.itemId, 'title')} 申购成功 - ${$.shopMap[$.shopId]['name']}\n`
+            } else if (data?.code === 4021) {
+              result = `❌ ${getProductInfo($.itemId, 'title')} 申购失败：${data.message} - ${$.shopMap[$.shopId]['name']}\n`;
+            } else {
+              console.log(`请求失败- ${$.shopMap[$.shopId]['name']}`, data);
+            }
+          } else {
+            $.log("⚠️ 服务器返回了空数据\n");
+          }
+        }
+        console.log(result);
+        message += result;
+      } catch (error) {
+        $.log(error);
+      } finally {
+        resolve();
+      }
+    });
+  });
+}
+
+
+// 领取耐力
+async function getEnergyAward() {
+  const time = Date.now();
+  let opt = {
+    url: `https://h5.moutai519.com.cn/game/isolationPage/getUserEnergyAward`,
+    headers: {
+      'MT-Token': Cookie,
+      'MT-Network-Type': `Unknown`,
+      'Accept-Language': `zh-Hans-CN;q=1`,
+      'MT-APP-Version': MT_VERSION,
+      'Accept-Encoding': `gzip, deflate, br`,
+      'Connection': `keep-alive`,
+      'MT-Device-ID': DeviceID,
+      'MT-Request-ID': `${Date.now() * 100000 + parseInt(10000 * Math.random())}`,
+      'Referer': 'https://h5.moutai519.com.cn/gux/game/main?appConfig=2_1_2',
+      'Origin': 'https://h5.moutai519.com.cn',
+      'User-Agent': MT_USERAGENT,
+      'MT-User-Tag': `0`,
+      'MT-K': time,
+      'MT-Bundle-ID': `com.moutai.mall`,
+      'Host': `app.moutai519.com.cn`,
+      'MT-R': MT_R,
+      'Accept': `*/*`,
+      'MT-Team-ID': ``,
+    },
+    body: ``
+  }
+  // console.log(opt);
+  return new Promise(resolve => {
+    $.post(opt, (err, resp, data) => {
+      try {
+        // console.log($.toStr(resp));
+        let result = '';
+        if (err) $.log(err);
+        if (data) {
+          // console.log(data);
+          data = JSON.parse(data);
+          if (data?.code === 200) {
+            if (data.data?.awardRule.length > 0) {
+              let awardRule = data.data.awardRule;
+              for (const item of awardRule) {
+                result += `🎉 获得申购奖励: ${item.goodName} +${item.count}`;
+              }
+            }
+          } else if (data?.code === 40001) {
+            result = `❌ 领取耐力失败: ${data.message}\n`;
+          } else {
+            console.log($.toStr(data));
+          }
+        } else {
+          $.log("⚠️ 服务器返回了空数据\n");
+        }
+        console.log(result);
+        message += result;
+      } catch (error) {
+        $.log(error);
+      } finally {
+        resolve();
+      }
+    });
+  });
+}
+
+
+// 领取连续申购小茅运奖励
+async function get7DayReward() {
+  const time = Date.now();
+  let opt = {
+    url: `https://h5.moutai519.com.cn/game/xmyApplyingReward/receive7DaysContinuouslyApplyingReward`,
+    headers: {
+      'MT-Token': Cookie,
+      'MT-Network-Type': `Unknown`,
+      'Accept-Language': `zh-Hans-CN;q=1`,
+      'MT-APP-Version': MT_VERSION,
+      'Accept-Encoding': `gzip, deflate, br`,
+      'Connection': `keep-alive`,
+      'MT-Device-ID': DeviceID,
+      'MT-Request-ID': `${Date.now() * 100000 + parseInt(10000 * Math.random())}`,
+      'Referer': 'https://h5.moutai519.com.cn/gux/game/task?appConfig=2_1_1',
+      'Origin': 'https://h5.moutai519.com.cn',
+      'User-Agent': MT_USERAGENT,
+      'MT-User-Tag': `0`,
+      'MT-K': time,
+      'MT-Bundle-ID': `com.moutai.mall`,
+      'Host': `app.moutai519.com.cn`,
+      'MT-R': MT_R,
+      'Accept': `*/*`,
+      'MT-Team-ID': ``,
+    },
+    body: ``
+  }
+  // console.log(opt);
+  return new Promise(resolve => {
+    $.post(opt, (err, resp, data) => {
+      try {
+        // console.log($.toStr(resp));
+        let result = '';
+        if (err) $.log(err);
+        if (data) {
+          // console.log(data);
+          data = JSON.parse(data);
+          if (data?.code === 2000) {
+            if (data?.data?.rewardAmount > 0) {
+              result += `🎉 获得连续申购奖励: 小茅运 +${data.data.rewardAmount}`;
+            } else {
+              console.log(`❌ 未达到连续申购奖励领取条件\n`);
+            }
+          } else {
+            console.log($.toStr(data));
+          }
+        } else {
+          $.log("⚠️ 服务器返回了空数据\n");
+        }
+        console.log(result);
+        message += result;
+      } catch (error) {
+        $.log(error);
+      } finally {
+        resolve();
+      }
+    });
+  });
+}
+
+
+// 查询累计申购天数
+// async function getApplyingDays() {
+//   const time = Date.now();
+//   let opt = {
+//     url: `https://h5.moutai519.com.cn/game/xmyApplyingReward/cumulativelyApplyingDays`,
+//     headers: {
+//       'MT-Token': Cookie,
+//       'MT-Network-Type': `Unknown`,
+//       'Accept-Language': `zh-Hans-CN;q=1`,
+//       'MT-APP-Version': MT_VERSION,
+//       'Accept-Encoding': `gzip, deflate, br`,
+//       'Connection': `keep-alive`,
+//       'MT-Device-ID': DeviceID,
+//       'MT-Request-ID': `${Date.now() * 100000 + parseInt(10000 * Math.random())}`,
+//       'Referer': 'https://h5.moutai519.com.cn/gux/game/task?appConfig=2_1_1',
+//       'Origin': 'https://h5.moutai519.com.cn',
+//       'User-Agent': MT_USERAGENT,
+//       'MT-User-Tag': `0`,
+//       'MT-K': time,
+//       'MT-Bundle-ID': `com.moutai.mall`,
+//       'Host': `app.moutai519.com.cn`,
+//       'MT-R': MT_R,
+//       'Accept': `*/*`,
+//       'MT-Team-ID': ``,
+//     },
+//     body: ``
+//   }
+//   // console.log(opt);
+//   return new Promise(resolve => {
+//     $.post(opt, async (err, resp, data) => {
+//       try {
+//         // console.log($.toStr(resp));
+//         let result = '';
+//         if (err) $.log(err);
+//         if (data) {
+//           // console.log(data);
+//           data = JSON.parse(data);
+//           if (data?.code === 2000) {
+//             let previousDays = data.data.previousDays;  // 申购天数
+//             if (data?.data?.appliedToday) previousDays += 1;
+//             let rewardReceived = data.data.rewardReceived;  // 奖励天数
+//             for (let days in rewardReceived) {
+//               if (previousDays >= Number(days) && !rewardReceived[days]) {
+//                 console.log(`开始领取申购${days}天奖励...\n`);
+//                 await getCumulativelyReward();
+//               }
+//             }
+//           } else {
+//             console.log($.toStr(data));
+//           }
+//         } else {
+//           $.log("⚠️ 服务器返回了空数据\n");
+//         }
+//         console.log(result);
+//         message += result;
+//       } catch (error) {
+//         $.log(error);
+//       } finally {
+//         resolve();
+//       }
+//     });
+//   });
+// }
+
+
+// 领取累计申购天数奖励
+async function getCumulativelyReward() {
+  const time = Date.now();
+  let opt = {
+    url: `https://h5.moutai519.com.cn/game/xmyApplyingReward/receiveCumulativelyApplyingReward`,
+    headers: {
+      'MT-Token': Cookie,
+      'MT-Network-Type': `Unknown`,
+      'Accept-Language': `zh-Hans-CN;q=1`,
+      'MT-APP-Version': MT_VERSION,
+      'Accept-Encoding': `gzip, deflate, br`,
+      'Connection': `keep-alive`,
+      'MT-Device-ID': DeviceID,
+      'MT-Request-ID': `${Date.now() * 100000 + parseInt(10000 * Math.random())}`,
+      'Referer': 'https://h5.moutai519.com.cn/gux/game/task?appConfig=2_1_1',
+      'Origin': 'https://h5.moutai519.com.cn',
+      'User-Agent': MT_USERAGENT,
+      'MT-User-Tag': `0`,
+      'MT-K': time,
+      'MT-Bundle-ID': `com.moutai.mall`,
+      'Host': `app.moutai519.com.cn`,
+      'MT-R': MT_R,
+      'Accept': `*/*`,
+      'MT-Team-ID': ``,
+    },
+    body: ``
+  }
+  // console.log(opt);
+  return new Promise(resolve => {
+    $.post(opt, (err, resp, data) => {
+      try {
+        // console.log($.toStr(resp));
+        let result = '';
+        if (err) $.log(err);
+        if (data) {
+          // console.log(data);
+          data = JSON.parse(data);
+          if (data?.code === 2000) {
+            if (data?.data?.rewardAmount > 0) {
+              result += `🎉 获得累计申购奖励: 小茅运 +${data.data.rewardAmount}`;
+            }
+          } else {
+            console.log(`❌ 未达到累计申购奖励领取条件\n`);
+          }
+        } else {
+          $.log("⚠️ 服务器返回了空数据\n");
+        }
+        console.log(result);
+        message += result;
+      } catch (error) {
+        $.log(error);
+      } finally {
+        resolve();
+      }
+    });
+  });
+}
+
+
+// // 申购记录
+// async function reservationList() {
+//   const time = Date.now();
+//   // const mtv = await getMTV(time);
+//   let opt = {
+//     url: `https://app.moutai519.com.cn/xhr/front/mall/reservation/list/pageOne/query`,
+//     headers: {
+//       'MT-Token': Cookie,
+//       'MT-Network-Type': `Unknown`,
+//       'Accept-Language': `zh-Hans-CN;q=1`,
+//       'MT-APP-Version': MT_VERSION,
+//       'Accept-Encoding': `gzip, deflate, br`,
+//       'Connection': `keep-alive`,
+//       'MT-Device-ID': DeviceID,
+//       'MT-Request-ID': `${Date.now() * 100000 + parseInt(10000 * Math.random())}`,
+//       'User-Agent': MT_USERAGENT,
+//       'MT-User-Tag': `0`,
+//       'MT-K': time,
+//       'MT-Bundle-ID': `com.moutai.mall`,
+//       'Host': `app.moutai519.com.cn`,
+//       // 'MT-V': mtv,
+//       'MT-R': MT_R,
+//       'Accept': `*/*`,
+//       'MT-Team-ID': ``,
+//     }
+//   }
+//   // console.log(opt);
+//   return new Promise(resolve => {
+//     $.get(opt, (err, resp, data) => {
+//       try {
+//         if (err) {
+//           $.log(err);
+//         } else {
+//           if (data) {
+//             // console.log(data);
+//             data = JSON.parse(data);
+//             if (data?.code === 2000) {
+//               const reservationList = data.data.reservationItemVOS;
+//               for (let i = 0; i < reservationList.length; i++) {
+//                 const {
+//                   reserveStartTime, // 申购场次
+//                   reservationTime, // 申购时间
+//                   itemName, // 商品名称
+//                   count,  // 申购数量
+//                   price, // 商品价格
+//                   shopId, // 店铺ID
+//                   itemId, // 商品ID
+//                   status  // 订单状态
+//                 } = reservationList[i];
+//                 if ($.time('MM-dd', reservationTime) === $.time('MM-dd')) {
+//                   message += (`申购时间: ${$.time('yyyy-MM-dd HH:mm:ss', reservationTime)}\n商品名称: ${itemName}\n商品价格: ${price} 元\n申购数量: ${count} 瓶\n\n`);
+//                 } else {
+//                   message += (`今日暂无申购记录\n`);
+//                 }
+//               }
+//             } else {
+//               console.log(`请求失败`, data);
+//             }
+//           } else {
+//             $.log("⚠️ 服务器返回了空数据\n");
+//           }
+//         }
+//       } catch (error) {
+//         $.log(error);
+//       } finally {
+//         resolve();
+//       }
+//     });
+//   });
+// }
+
+
+// 获取产品信息
+function getProductInfo(productId, y) {
+  for (const x in productInfo) {
+    const { picUrl, title, price, count, itemId, inventory, areaLimitTag, areaLimit } = productInfo[x];
+    if (productId === itemId) {
+      return productInfo[x][y];
+    }
+  }
+}
+
+
+function http_get(url, headers = { 'Content-Type': 'application/x-www-form-urlencoded' }) {
+  let opt = {
+    url,
+    headers
+  }
+  // console.log(opt)；
+  return new Promise(resolve => {
+    $.get(opt, (err, resp, data) => {
+      let result = '';
+      try {
+        if (err) {
+          $.log(err);
+        } else {
+          if (data) {
+            // console.log(data);
+            try {
+              result = JSON.parse(data);
+            } catch (e) {
+              result = data;
+            }
+          } else {
+            $.log("⚠️ 服务器返回了空数据\n");
+          }
+        }
+      } catch (error) {
+        $.log(error);
+      } finally {
+        resolve(result);
+      }
+    });
+  });
+}
+
+
+// 随机数组
+function randomArr(arr) {
+  return arr[parseInt(Math.random() * arr.length, 10)];
+}
+
+
 // prettier-ignore
-// https://github.com/chavyleung/scripts/blob/master/Env.min.js
-
-function Env(t,e){class s{constructor(t){this.env=t}send(t,e="GET"){t="string"==typeof t?{url:t}:t;let s=this.get;return"POST"===e&&(s=this.post),new Promise((e,a)=>{s.call(this,t,(t,s,r)=>{t?a(t):e(s)})})}get(t){return this.send.call(this.env,t)}post(t){return this.send.call(this.env,t,"POST")}}return new class{constructor(t,e){this.name=t,this.http=new s(this),this.data=null,this.dataFile="box.dat",this.logs=[],this.isMute=!1,this.isNeedRewrite=!1,this.logSeparator="\n",this.encoding="utf-8",this.startTime=(new Date).getTime(),Object.assign(this,e),this.log("",`\ud83d\udd14${this.name}, \u5f00\u59cb!`)}getEnv(){return"undefined"!=typeof $environment&&$environment["surge-version"]?"Surge":"undefined"!=typeof $environment&&$environment["stash-version"]?"Stash":"undefined"!=typeof $task?"Quantumult X":"undefined"!=typeof $loon?"Loon":"undefined"!=typeof $rocket?"Shadowrocket":void 0}isQuanX(){return"Quantumult X"===this.getEnv()}isSurge(){return"Surge"===this.getEnv()}isLoon(){return"Loon"===this.getEnv()}isShadowrocket(){return"Shadowrocket"===this.getEnv()}isStash(){return"Stash"===this.getEnv()}toObj(t,e=null){try{return JSON.parse(t)}catch{return e}}toStr(t,e=null){try{return JSON.stringify(t)}catch{return e}}getjson(t,e){let s=e;const a=this.getdata(t);if(a)try{s=JSON.parse(this.getdata(t))}catch{}return s}setjson(t,e){try{return this.setdata(JSON.stringify(t),e)}catch{return!1}}lodash_get(t,e,s){const a=e.replace(/\[(\d+)\]/g,".$1").split(".");let r=t;for(const t of a)if(r=Object(r)[t],void 0===r)return s;return r}lodash_set(t,e,s){return Object(t)!==t?t:(Array.isArray(e)||(e=e.toString().match(/[^.[\]]+/g)||[]),e.slice(0,-1).reduce((t,s,a)=>Object(t[s])===t[s]?t[s]:t[s]=Math.abs(e[a+1])>>0==+e[a+1]?[]:{},t)[e[e.length-1]]=s,t)}getdata(t){let e=this.getval(t);if(/^@/.test(t)){const[,s,a]=/^@(.*?)\.(.*?)$/.exec(t),r=s?this.getval(s):"";if(r)try{const t=JSON.parse(r);e=t?this.lodash_get(t,a,""):e}catch(t){e=""}}return e}setdata(t,e){let s=!1;if(/^@/.test(e)){const[,a,r]=/^@(.*?)\.(.*?)$/.exec(e),n=this.getval(a),o=a?"null"===n?null:n||"{}":"{}";try{const e=JSON.parse(o);this.lodash_set(e,r,t),s=this.setval(JSON.stringify(e),a)}catch(e){const n={};this.lodash_set(n,r,t),s=this.setval(JSON.stringify(n),a)}}else s=this.setval(t,e);return s}getval(t){switch(this.getEnv()){case"Surge":case"Loon":case"Stash":case"Shadowrocket":return $persistentStore.read(t);case"Quantumult X":return $prefs.valueForKey(t);default:return this.data&&this.data[t]||null}}setval(t,e){switch(this.getEnv()){case"Surge":case"Loon":case"Stash":case"Shadowrocket":return $persistentStore.write(t,e);case"Quantumult X":return $prefs.setValueForKey(t,e);default:return this.data&&this.data[e]||null}}get(t,e=(()=>{})){switch(t.headers&&(delete t.headers["Content-Type"],delete t.headers["Content-Length"],delete t.headers["content-type"],delete t.headers["content-length"]),this.getEnv()){case"Surge":case"Loon":case"Stash":case"Shadowrocket":default:this.isSurge()&&this.isNeedRewrite&&(t.headers=t.headers||{},Object.assign(t.headers,{"X-Surge-Skip-Scripting":!1})),$httpClient.get(t,(t,s,a)=>{!t&&s&&(s.body=a,s.statusCode=s.status?s.status:s.statusCode,s.status=s.statusCode),e(t,s,a)});break;case"Quantumult X":this.isNeedRewrite&&(t.opts=t.opts||{},Object.assign(t.opts,{hints:!1})),$task.fetch(t).then(t=>{const{statusCode:s,statusCode:a,headers:r,body:n,bodyBytes:o}=t;e(null,{status:s,statusCode:a,headers:r,body:n,bodyBytes:o},n,o)},t=>e(t&&t.error||"UndefinedError"))}}post(t,e=(()=>{})){const s=t.method?t.method.toLocaleLowerCase():"post";switch(t.body&&t.headers&&!t.headers["Content-Type"]&&!t.headers["content-type"]&&(t.headers["content-type"]="application/x-www-form-urlencoded"),t.headers&&(delete t.headers["Content-Length"],delete t.headers["content-length"]),this.getEnv()){case"Surge":case"Loon":case"Stash":case"Shadowrocket":default:this.isSurge()&&this.isNeedRewrite&&(t.headers=t.headers||{},Object.assign(t.headers,{"X-Surge-Skip-Scripting":!1})),$httpClient[s](t,(t,s,a)=>{!t&&s&&(s.body=a,s.statusCode=s.status?s.status:s.statusCode,s.status=s.statusCode),e(t,s,a)});break;case"Quantumult X":t.method=s,this.isNeedRewrite&&(t.opts=t.opts||{},Object.assign(t.opts,{hints:!1})),$task.fetch(t).then(t=>{const{statusCode:s,statusCode:a,headers:r,body:n,bodyBytes:o}=t;e(null,{status:s,statusCode:a,headers:r,body:n,bodyBytes:o},n,o)},t=>e(t&&t.error||"UndefinedError"))}}time(t,e=null){const s=e?new Date(e):new Date;let a={"M+":s.getMonth()+1,"d+":s.getDate(),"H+":s.getHours(),"m+":s.getMinutes(),"s+":s.getSeconds(),"q+":Math.floor((s.getMonth()+3)/3),S:s.getMilliseconds()};/(y+)/.test(t)&&(t=t.replace(RegExp.$1,(s.getFullYear()+"").substr(4-RegExp.$1.length)));for(let e in a)new RegExp("("+e+")").test(t)&&(t=t.replace(RegExp.$1,1==RegExp.$1.length?a[e]:("00"+a[e]).substr((""+a[e]).length)));return t}queryStr(t){let e="";for(const s in t){let a=t[s];null!=a&&""!==a&&("object"==typeof a&&(a=JSON.stringify(a)),e+=`${s}=${a}&`)}return e=e.substring(0,e.length-1),e}msg(e=t,s="",a="",r){const n=t=>{switch(typeof t){case void 0:return t;case"string":switch(this.getEnv()){case"Surge":case"Stash":default:return{url:t};case"Loon":case"Shadowrocket":return t;case"Quantumult X":return{"open-url":t}}case"object":switch(this.getEnv()){case"Surge":case"Stash":case"Shadowrocket":default:{let e=t.url||t.openUrl||t["open-url"];return{url:e}}case"Loon":{let e=t.openUrl||t.url||t["open-url"],s=t.mediaUrl||t["media-url"];return{openUrl:e,mediaUrl:s}}case"Quantumult X":{let e=t["open-url"]||t.url||t.openUrl,s=t["media-url"]||t.mediaUrl,a=t["update-pasteboard"]||t.updatePasteboard;return{"open-url":e,"media-url":s,"update-pasteboard":a}}}default:return}};if(!this.isMute)switch(this.getEnv()){case"Surge":case"Loon":case"Stash":case"Shadowrocket":default:$notification.post(e,s,a,n(r));break;case"Quantumult X":$notify(e,s,a,n(r))}}log(...t){t.length>0&&(this.logs=[...this.logs,...t]),console.log(t.join(this.logSeparator))}logErr(t,e=""){switch(this.getEnv()){case"Surge":case"Loon":case"Stash":case"Shadowrocket":case"Quantumult X":default:this.log("",`\u2757\ufe0f${this.name}, \u9519\u8bef!`,e,t)}}wait(t){return new Promise(e=>setTimeout(e,t))}done(t={}){const e=(new Date).getTime(),s=(e-this.startTime)/1e3;switch(this.log("",`\ud83d\udd14${this.name}, \u7ed3\u675f! \ud83d\udd5b ${s} \u79d2`),this.log(),this.getEnv()){case"Surge":case"Loon":case"Stash":case"Shadowrocket":case"Quantumult X":default:$done(t)}}}(t,e)}
+function Env(t, e) { "undefined" != typeof process && JSON.stringify(process.env).indexOf("GITHUB") > -1 && process.exit(0); class s { constructor(t) { this.env = t } send(t, e = "GET") { t = "string" == typeof t ? { url: t } : t; let s = this.get; return "POST" === e && (s = this.post), new Promise((e, i) => { s.call(this, t, (t, s, r) => { t ? i(t) : e(s) }) }) } get(t) { return this.send.call(this.env, t) } post(t) { return this.send.call(this.env, t, "POST") } } return new class { constructor(t, e) { this.name = t, this.http = new s(this), this.data = null, this.dataFile = "box.dat", this.logs = [], this.isMute = !1, this.isNeedRewrite = !1, this.logSeparator = "\n", this.startTime = (new Date).getTime(), Object.assign(this, e), this.log("", `🔔${this.name}, 开始!`) } isNode() { return "undefined" != typeof module && !!module.exports } isQuanX() { return "undefined" != typeof $task } isSurge() { return "undefined" != typeof $httpClient && "undefined" == typeof $loon } isLoon() { return "undefined" != typeof $loon } toObj(t, e = null) { try { return JSON.parse(t) } catch { return e } } toStr(t, e = null) { try { return JSON.stringify(t) } catch { return e } } getjson(t, e) { let s = e; const i = this.getdata(t); if (i) try { s = JSON.parse(this.getdata(t)) } catch { } return s } setjson(t, e) { try { return this.setdata(JSON.stringify(t), e) } catch { return !1 } } getScript(t) { return new Promise(e => { this.get({ url: t }, (t, s, i) => e(i)) }) } runScript(t, e) { return new Promise(s => { let i = this.getdata("@chavy_boxjs_userCfgs.httpapi"); i = i ? i.replace(/\n/g, "").trim() : i; let r = this.getdata("@chavy_boxjs_userCfgs.httpapi_timeout"); r = r ? 1 * r : 20, r = e && e.timeout ? e.timeout : r; const [o, h] = i.split("@"), n = { url: `http://${h}/v1/scripting/evaluate`, body: { script_text: t, mock_type: "cron", timeout: r }, headers: { "X-Key": o, accept: "*/*" } }; this.post(n, (t, e, i) => s(i)) }).catch(t => this.logErr(t)) } loaddata() { if (!this.isNode()) return {}; { this.fs = this.fs ? this.fs : require("fs"), this.path = this.path ? this.path : require("path"); const t = this.path.resolve(this.dataFile), e = this.path.resolve(process.cwd(), this.dataFile), s = this.fs.existsSync(t), i = !s && this.fs.existsSync(e); if (!s && !i) return {}; { const i = s ? t : e; try { return JSON.parse(this.fs.readFileSync(i)) } catch (t) { return {} } } } } writedata() { if (this.isNode()) { this.fs = this.fs ? this.fs : require("fs"), this.path = this.path ? this.path : require("path"); const t = this.path.resolve(this.dataFile), e = this.path.resolve(process.cwd(), this.dataFile), s = this.fs.existsSync(t), i = !s && this.fs.existsSync(e), r = JSON.stringify(this.data); s ? this.fs.writeFileSync(t, r) : i ? this.fs.writeFileSync(e, r) : this.fs.writeFileSync(t, r) } } lodash_get(t, e, s) { const i = e.replace(/\[(\d+)\]/g, ".$1").split("."); let r = t; for (const t of i) if (r = Object(r)[t], void 0 === r) return s; return r } lodash_set(t, e, s) { return Object(t) !== t ? t : (Array.isArray(e) || (e = e.toString().match(/[^.[\]]+/g) || []), e.slice(0, -1).reduce((t, s, i) => Object(t[s]) === t[s] ? t[s] : t[s] = Math.abs(e[i + 1]) >> 0 == +e[i + 1] ? [] : {}, t)[e[e.length - 1]] = s, t) } getdata(t) { let e = this.getval(t); if (/^@/.test(t)) { const [, s, i] = /^@(.*?)\.(.*?)$/.exec(t), r = s ? this.getval(s) : ""; if (r) try { const t = JSON.parse(r); e = t ? this.lodash_get(t, i, "") : e } catch (t) { e = "" } } return e } setdata(t, e) { let s = !1; if (/^@/.test(e)) { const [, i, r] = /^@(.*?)\.(.*?)$/.exec(e), o = this.getval(i), h = i ? "null" === o ? null : o || "{}" : "{}"; try { const e = JSON.parse(h); this.lodash_set(e, r, t), s = this.setval(JSON.stringify(e), i) } catch (e) { const o = {}; this.lodash_set(o, r, t), s = this.setval(JSON.stringify(o), i) } } else s = this.setval(t, e); return s } getval(t) { return this.isSurge() || this.isLoon() ? $persistentStore.read(t) : this.isQuanX() ? $prefs.valueForKey(t) : this.isNode() ? (this.data = this.loaddata(), this.data[t]) : this.data && this.data[t] || null } setval(t, e) { return this.isSurge() || this.isLoon() ? $persistentStore.write(t, e) : this.isQuanX() ? $prefs.setValueForKey(t, e) : this.isNode() ? (this.data = this.loaddata(), this.data[e] = t, this.writedata(), !0) : this.data && this.data[e] || null } initGotEnv(t) { this.got = this.got ? this.got : require("got"), this.cktough = this.cktough ? this.cktough : require("tough-cookie"), this.ckjar = this.ckjar ? this.ckjar : new this.cktough.CookieJar, t && (t.headers = t.headers ? t.headers : {}, void 0 === t.headers.Cookie && void 0 === t.cookieJar && (t.cookieJar = this.ckjar)) } get(t, e = (() => { })) { t.headers && (delete t.headers["Content-Type"], delete t.headers["Content-Length"]), this.isSurge() || this.isLoon() ? (this.isSurge() && this.isNeedRewrite && (t.headers = t.headers || {}, Object.assign(t.headers, { "X-Surge-Skip-Scripting": !1 })), $httpClient.get(t, (t, s, i) => { !t && s && (s.body = i, s.statusCode = s.status), e(t, s, i) })) : this.isQuanX() ? (this.isNeedRewrite && (t.opts = t.opts || {}, Object.assign(t.opts, { hints: !1 })), $task.fetch(t).then(t => { const { statusCode: s, statusCode: i, headers: r, body: o } = t; e(null, { status: s, statusCode: i, headers: r, body: o }, o) }, t => e(t))) : this.isNode() && (this.initGotEnv(t), this.got(t).on("redirect", (t, e) => { try { if (t.headers["set-cookie"]) { const s = t.headers["set-cookie"].map(this.cktough.Cookie.parse).toString(); s && this.ckjar.setCookieSync(s, null), e.cookieJar = this.ckjar } } catch (t) { this.logErr(t) } }).then(t => { const { statusCode: s, statusCode: i, headers: r, body: o } = t; e(null, { status: s, statusCode: i, headers: r, body: o }, o) }, t => { const { message: s, response: i } = t; e(s, i, i && i.body) })) } post(t, e = (() => { })) { if (t.body && t.headers && !t.headers["Content-Type"] && (t.headers["Content-Type"] = "application/x-www-form-urlencoded"), t.headers && delete t.headers["Content-Length"], this.isSurge() || this.isLoon()) this.isSurge() && this.isNeedRewrite && (t.headers = t.headers || {}, Object.assign(t.headers, { "X-Surge-Skip-Scripting": !1 })), $httpClient.post(t, (t, s, i) => { !t && s && (s.body = i, s.statusCode = s.status), e(t, s, i) }); else if (this.isQuanX()) t.method = "POST", this.isNeedRewrite && (t.opts = t.opts || {}, Object.assign(t.opts, { hints: !1 })), $task.fetch(t).then(t => { const { statusCode: s, statusCode: i, headers: r, body: o } = t; e(null, { status: s, statusCode: i, headers: r, body: o }, o) }, t => e(t)); else if (this.isNode()) { this.initGotEnv(t); const { url: s, ...i } = t; this.got.post(s, i).then(t => { const { statusCode: s, statusCode: i, headers: r, body: o } = t; e(null, { status: s, statusCode: i, headers: r, body: o }, o) }, t => { const { message: s, response: i } = t; e(s, i, i && i.body) }) } } time(t, e = null) { const s = e ? new Date(e) : new Date; let i = { "M+": s.getMonth() + 1, "d+": s.getDate(), "H+": s.getHours(), "m+": s.getMinutes(), "s+": s.getSeconds(), "q+": Math.floor((s.getMonth() + 3) / 3), S: s.getMilliseconds() }; /(y+)/.test(t) && (t = t.replace(RegExp.$1, (s.getFullYear() + "").substr(4 - RegExp.$1.length))); for (let e in i) new RegExp("(" + e + ")").test(t) && (t = t.replace(RegExp.$1, 1 == RegExp.$1.length ? i[e] : ("00" + i[e]).substr(("" + i[e]).length))); return t } msg(e = t, s = "", i = "", r) { const o = t => { if (!t) return t; if ("string" == typeof t) return this.isLoon() ? t : this.isQuanX() ? { "open-url": t } : this.isSurge() ? { url: t } : void 0; if ("object" == typeof t) { if (this.isLoon()) { let e = t.openUrl || t.url || t["open-url"], s = t.mediaUrl || t["media-url"]; return { openUrl: e, mediaUrl: s } } if (this.isQuanX()) { let e = t["open-url"] || t.url || t.openUrl, s = t["media-url"] || t.mediaUrl; return { "open-url": e, "media-url": s } } if (this.isSurge()) { let e = t.url || t.openUrl || t["open-url"]; return { url: e } } } }; if (this.isMute || (this.isSurge() || this.isLoon() ? $notification.post(e, s, i, o(r)) : this.isQuanX() && $notify(e, s, i, o(r))), !this.isMuteLog) { let t = ["", "==============📣系统通知📣=============="]; t.push(e), s && t.push(s), i && t.push(i), console.log(t.join("\n")), this.logs = this.logs.concat(t) } } log(...t) { t.length > 0 && (this.logs = [...this.logs, ...t]), console.log(t.join(this.logSeparator)) } logErr(t, e) { const s = !this.isSurge() && !this.isQuanX() && !this.isLoon(); s ? this.log("", `❗️${this.name}, 错误!`, t.stack) : this.log("", `❗️${this.name}, 错误!`, t) } wait(t) { return new Promise(e => setTimeout(e, t)) } done(t = {}) { const e = (new Date).getTime(), s = (e - this.startTime) / 1e3; this.log("", `🔔${this.name}, 结束! 🕛 ${s} 秒`), this.log(), (this.isSurge() || this.isQuanX() || this.isLoon()) && $done(t) } }(t, e) }

@@ -3,7 +3,7 @@
   "name": "应用订阅",
   "author": "@FISH",
   "icon": "https://avatars.githubusercontent.com/u/44187836",
-  "repo": "https://github.com/FISH",
+  "repo": "https://raw.githubusercontent.com/wraefish/wan/main/imt.js",
   "apps": [
     {
       "id": "iMaoTai",

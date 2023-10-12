@@ -8,9 +8,6 @@
    {
             "id": "wraefish",
             "name": "i茅台预约",
-            "descs_html": [
-                ""
-            ],
             "keys": [
                 "imaotai__config__istravel",
                 "imaotai__config__province",

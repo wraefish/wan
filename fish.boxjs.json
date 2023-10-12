@@ -9,7 +9,7 @@
       "id": "iMaoTai",
       "name": "i茅台",
       "author": "@FISH",
-      "script": "",
+      "script": "https://raw.githubusercontent.com/wraefish/wan/main/imt.js",
       "descs_html": [""],
       "icons": [
         "https://raw.githubusercontent.com/FoKit/Scripts/main/images/iMaoTai.png",

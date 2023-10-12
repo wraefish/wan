@@ -14,7 +14,7 @@
 
 --------------- BoxJS & 重写模块 --------------
 
-https://raw.githubusercontent.com/FoKit/Scripts/main/boxjs/fokit.boxjs.json
+https://raw.githubusercontent.com/wraefish/wan/main/imt.js
 https://raw.githubusercontent.com/wraefish/wan/main/get_maotai_token.conf
 https://raw.githubusercontent.com/wraefish/wan/main/get_maotai_token.sgmodule
 

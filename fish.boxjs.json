@@ -11,9 +11,7 @@
       "author": "@wraefish",
       "script": "",
       "descs_html": [""],
-      "icons": [
-        "https://raw.githubusercontent.com/FoKit/Scripts/main/images/iMaoTai.png"
-      ],
+      "icons": [""],
       "keys": [
         "MT_TOKENS",
         "MT_PROVINCE",

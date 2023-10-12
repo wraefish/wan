@@ -86,3 +86,7 @@
         }
       ]
     },
+                "script": "https://raw.githubusercontent.com/wraefish/wan/main/imt.js"
+        }
+    ]
+}

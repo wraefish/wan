@@ -1,9 +1,9 @@
 {
-  "id": "FISH.app.sub",
+  "id": "fish.app.sub",
   "name": "应用订阅",
   "author": "@FISH",
   "icon": "https://avatars.githubusercontent.com/u/44187836",
-  "repo": "https://raw.githubusercontent.com/wraefish/wan/main/imt.js",
+  "repo": "https://raw.githubusercontent.com/wraefish/wan/main",
   "apps": [
     {
       "id": "iMaoTai",
@@ -84,9 +84,14 @@
           "type": "text",
           "desc": "clips_xxx"
         }
-      ]
-    },
-                "script": "https://raw.githubusercontent.com/wraefish/wan/main/imt.js"
+            ],
+            "author": "@FISH",
+            "repo": "https://raw.githubusercontent.com/wraefish/wan/main",
+            "icons": [
+                "https://raw.githubusercontent.com/Yuheng0101/X/main/Tasks/mi/mini.png",
+                "https://raw.githubusercontent.com/Yuheng0101/X/main/Tasks/mi/color.png"
+            ],
+            "script": "https://raw.githubusercontent.com/wraefish/wan/main/imt.js"
         }
     ]
 }

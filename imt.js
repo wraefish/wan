@@ -538,23 +538,7 @@ function Maotai() {
                 $.log(`❌分享失败: ${e}!`)
             }
         }
-        // 循环预约
-        async doMain() {
-            for (var key of Object.keys(itemMap)) {
-                if (!itemList.includes(key)) {
-                    $.log(`\n⚠️跳过${itemMap[key]}(${key})预约`)
-                    continue
-                }
-                console.log(`\n🔔 ${itemMap[key]}(${key})预约开始!`)
-                if (!shopid) await this.getNearbyStore(key) // 获取最近店铺
-                if (!this.shopId) {
-                    Message += `\n============================\n`
-                    continue
-                }
-                await this.doReserve(key) // 预约
-                Message += `\n============================\n`
-            }
-        }
+
         // 小茅运旅行
         async doTravel() {
             if (!isTravel) {

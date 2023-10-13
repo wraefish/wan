@@ -1,7 +1,7 @@
 {
   "id": "wraefish.app.sub",
   "author": "@wraefish",
-  "icon": "https://github.com/wraefish/wan/blob/main/fish.png",
+  "icon": "https://github.com/wraefish/wan/blob/4c5e2f82dd15e69da4a2830ee338704b2eb4de15/fish.png",
   "name": "wraefish 脚本订阅",
   "repo": "https://github.com/wraefish/wan",
   "apps": [

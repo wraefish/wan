@@ -1,13 +1,13 @@
 {
-  "id": "sosliu.app.sub",
-  "author": "@sosliu",
+  "id": "wraefish.app.sub",
+  "author": "@wraefish",
   "icon": "https://avatars.githubusercontent.com/u/50571734?s=460&u=808616a26243d457cae2e41ffa728895e1e5ed4b&v=4",
-  "name": "sosliu 脚本订阅",
-  "repo": "https://github.com/sosliu/QX",
+  "name": "wraefish 脚本订阅",
+  "repo": "https://github.com/wraefish/wan",
   "apps": [
     {
-      "repo": "https://github.com/sosliu/QX",
-      "author": "@sosliu",
+      "repo": "https://github.com/wraefish/wan",
+      "author": "@wraefish",
       "keys": [
         "imaotai__config__istravel",
         "imaotai__config__province",
@@ -17,10 +17,10 @@
         "imaotai__config__location",
         "imaotai__config__shopid"
       ],
-      "id": "yuheng.imaotai",
-      "script": "https://raw.githubusercontent.com/sosliu/QX/main/boxjs/imaotai.js",
+      "id": "imaotai",
+      "script": "https://raw.githubusercontent.com/wraefish/wan/main/sk/imt.js",
       "descs_html": [
-        "<a target='_blank' href='https://github.com/sosliu/QX/boxjs'>README.md</a>"
+        "<a target='_blank' href='https://github.com/wraefish/wan'>README.md</a>"
       ],
       "settings": [
         {
